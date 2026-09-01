@@ -23,6 +23,7 @@ Uploads skip objects whose size already matches the local file, so a
 re-run after a partial sync only sends what's missing.
 """
 import argparse
+import io
 import os
 import sys
 
@@ -111,6 +112,47 @@ def check(cfg):
           f"{'No objects under kalshi/ yet.' if n == 0 else f'{n}+ objects already under kalshi/.'}")
 
 
+# events.parquet and markets.parquet are one file per season (unlike trades/
+# candlesticks/orderbooks, which are partitioned per week) -- keyed by their
+# primary key so a merge can be found and applied before upload.
+CATALOG_MERGE_KEYS = {"events.parquet": "event_ticker", "markets.parquet": "market_ticker"}
+
+
+def _merge_catalog_file(client, bucket, key, local_path):
+    """A plain overwrite-on-upload is wrong for events.parquet/markets.parquet:
+    whoever runs the export only has whatever's in their local SQLite cache,
+    which is frequently a subset of the season (e.g. a daily job's fresh,
+    single-day local db). Uploading that verbatim would blow away every other
+    day's rows already in the bucket. Download what's there first and merge
+    by primary key -- local rows win on a conflicting key, since they're the
+    fresher pull -- before this key ever reaches the upload step."""
+    pk = CATALOG_MERGE_KEYS.get(os.path.basename(key))
+    if pk is None:
+        return
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from botocore.exceptions import ClientError
+
+    try:
+        resp = client.get_object(Bucket=bucket, Key=key)
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+            return
+        raise
+    remote_table = pq.read_table(io.BytesIO(resp["Body"].read()))
+    local_table = pq.read_table(local_path)
+    if remote_table.num_rows == 0:
+        return
+
+    by_key = {}
+    for row in remote_table.to_pylist():
+        by_key[row[pk]] = row
+    for row in local_table.to_pylist():  # local rows applied last, so they win
+        by_key[row[pk]] = row
+    merged = pa.Table.from_pylist(list(by_key.values()), schema=local_table.schema)
+    pq.write_table(merged, local_path, compression="snappy")
+
+
 def iter_local_files(local_root, prefix):
     for dirpath, _, filenames in os.walk(local_root):
         for fn in filenames:
@@ -134,6 +176,7 @@ def sync(cfg, local_root, prefix, dry_run):
     uploaded = skipped = 0
     total_bytes = 0
     for full, key in iter_local_files(local_root, prefix):
+        _merge_catalog_file(client, bucket, key, full)
         size = os.path.getsize(full)
         if existing.get(key) == size:
             skipped += 1
