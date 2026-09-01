@@ -76,30 +76,34 @@ def connect(cache_dir=DEFAULT_CACHE_DIR):
 
 if __name__ == "__main__":
     con, root = connect()
+    # union_by_name=true: markets.parquet columns have grown over time (e.g.
+    # expected_expiration_time), and not every season has been re-exported
+    # since -- without this, a glob across seasons with different columns
+    # errors instead of filling the missing ones with NULL.
 
     print("\n=== events / markets per season ===")
     con.sql(f"""
         SELECT season, count(*) AS events
-        FROM read_parquet('{root}/season=*/events.parquet', hive_partitioning=true)
+        FROM read_parquet('{root}/season=*/events.parquet', hive_partitioning=true, union_by_name=true)
         GROUP BY season ORDER BY season
     """).show()
     con.sql(f"""
         SELECT season, status, result, count(*) AS markets
-        FROM read_parquet('{root}/season=*/markets.parquet', hive_partitioning=true)
+        FROM read_parquet('{root}/season=*/markets.parquet', hive_partitioning=true, union_by_name=true)
         GROUP BY season, status, result ORDER BY season, status, result
     """).show()
 
     print("=== trades per season ===")
     con.sql(f"""
         SELECT season, count(*) AS trades, count(DISTINCT event_ticker) AS events_with_trades
-        FROM read_parquet('{root}/season=*/trades/week=*/trades.parquet', hive_partitioning=true)
+        FROM read_parquet('{root}/season=*/trades/week=*/trades.parquet', hive_partitioning=true, union_by_name=true)
         GROUP BY season ORDER BY season
     """).show()
 
     print("=== candlesticks per season ===")
     con.sql(f"""
         SELECT season, count(*) AS candles
-        FROM read_parquet('{root}/season=*/candlesticks/week=*/candles.parquet', hive_partitioning=true)
+        FROM read_parquet('{root}/season=*/candlesticks/week=*/candles.parquet', hive_partitioning=true, union_by_name=true)
         GROUP BY season ORDER BY season
     """).show()
 
