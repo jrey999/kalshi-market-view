@@ -1,6 +1,6 @@
 '''
 First order-flow signal: does pre-kickoff price momentum (drift toward or
-away from the favorite in the 24h before kickoff) predict the outcome
+away from the favorite in the window before kickoff) predict the outcome
 beyond what the kickoff price level alone already predicts?
 
 This matters because calibration.py already showed the kickoff price is
@@ -12,14 +12,18 @@ as the baseline, then check whether adding drift as a second predictor
 improves out-of-sample log-loss and whether its coefficient is significant.
 
 drift_cents = favorite's filtered price at kickoff minus its filtered
-price 24h before kickoff, on the SAME side chosen as the favorite at
-kickoff (so positive = market got more confident in the eventual kickoff
-favorite over the last day; negative = moved away from it, i.e. the
-underdog gained ground late).
+price --window-hours before kickoff, on the SAME side chosen as the
+favorite at kickoff (so positive = market got more confident in the
+eventual kickoff favorite over the window; negative = moved away from it,
+i.e. the underdog gained ground late). 24h was the first window tried and
+showed nothing (see git history) -- --window-hours lets shorter,
+closer-to-kickoff "steam move" horizons get tested without duplicating
+this file.
 
 Usage:
-  python3 analysis/order_flow.py
+  python3 analysis/order_flow.py [--window-hours N]
 '''
+import argparse
 import os
 import sys
 from collections import defaultdict
@@ -32,7 +36,6 @@ from db import connect
 from filters import filtered_price_at
 
 GAME_DURATION_HOURS = 3.5
-MOMENTUM_WINDOW_HOURS = 24
 EPS = 1e-4  # keep logit() finite at the 0/100 boundary
 
 
@@ -102,6 +105,11 @@ def cv_log_loss(X, y, k=5, seed=0):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--window-hours", type=float, default=24, help="Lookback window before kickoff for the drift feature (default 24)")
+    args = parser.parse_args()
+    window_hours = args.window_hours
+
     con, root = connect()
 
     markets = con.sql(f"""
@@ -130,7 +138,7 @@ def main():
         price_kick, _ = filtered_price_at(candles, kickoff_ts)
         if price_kick is None:
             continue
-        price_prior, _ = filtered_price_at(candles, kickoff_ts - MOMENTUM_WINDOW_HOURS * 3600)
+        price_prior, _ = filtered_price_at(candles, kickoff_ts - window_hours * 3600)
         events[event_ticker][market_ticker] = {
             "result": result, "price_kick": price_kick, "price_prior": price_prior,
         }
@@ -154,13 +162,13 @@ def main():
         rows.append((favorite["price_kick"], drift, won))
 
     print(f"{len(rows)} games usable ({skipped_incomplete} missing a side, {skipped_tie} exact ties, "
-          f"{skipped_no_prior} with no price {MOMENTUM_WINDOW_HOURS}h before kickoff).\n")
+          f"{skipped_no_prior} with no price {window_hours}h before kickoff).\n")
 
     price_kick = np.array([r[0] for r in rows])
     drift = np.array([r[1] for r in rows])
     y = np.array([r[2] for r in rows])
 
-    print(f"Drift (favorite price at kickoff minus {MOMENTUM_WINDOW_HOURS}h prior), cents:")
+    print(f"Drift (favorite price at kickoff minus {window_hours}h prior), cents:")
     print(f"  mean={drift.mean():+.2f}  std={drift.std():.2f}  "
           f"min={drift.min():+.0f}  max={drift.max():+.0f}")
     print(f"  moved toward favorite (>+1c): {int((drift > 1).sum())}, "
@@ -182,7 +190,7 @@ def main():
     print(f"  in-sample log-loss={log_loss(y, predict(beta_a, X_a)):.4f}  "
           f"brier={brier(y, predict(beta_a, X_a)):.4f}")
 
-    print("\n--- Model B: price + 24h drift ---")
+    print(f"\n--- Model B: price + {window_hours}h drift ---")
     print(f"  intercept={beta_b[0]:+.3f} (se {se_b[0]:.3f})   "
           f"logit(price) coef={beta_b[1]:+.3f} (se {se_b[1]:.3f})   "
           f"drift coef={beta_b[2]:+.3f} (se {se_b[2]:.3f}, z={beta_b[2]/se_b[2]:+.2f})")
