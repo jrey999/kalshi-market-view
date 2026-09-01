@@ -7,8 +7,16 @@ reusable tool, then a persistent multi-season dataset.
 
 **Repo move complete**: code was moved from `jrey999/Backtester` (branch
 `claude/siu-samford-kalshi-data-59r9tn`, under `kalshi_data/`) into its own
-repo, `jrey999/kalshi-market-view`, at the root. Git history was not
-carried over (the old branch had a ~22 MB SQLite file committed in it).
+repo, `jrey999/kalshi-market-view`. Git history was not carried over (the
+old branch had a ~22 MB SQLite file committed in it).
+
+**Layout**: pipeline code lives under `data/`; the subset of it that talks
+to the Spaces bucket (`spaces_export.py`, `spaces_sync.py`) lives under
+`data/spaces/`, which also holds `staging/` — the local Parquet tree
+`spaces_export.py` writes and `spaces_sync.py` uploads from (gitignored,
+regenerable). `data/daily_sync.py` orchestrates the three CLIs
+(`bulk_pull.py` → `spaces/spaces_export.py` → `spaces/spaces_sync.py`) into
+one daily job; see "Daily automation" below.
 
 ## Key API facts (learned the hard way)
 
@@ -128,20 +136,39 @@ dataset.
 - `bulk_pull.py` — batch pull over a date window. `--skip-existing` skips
   events whose markets are all settled, so a killed run resumes cheaply
   (unsettled games are still re-pulled, since their prices move).
-- `spaces_export.py` — SQLite → Parquet in the bucket layout. Streams each
-  week through a ParquetWriter in row-group chunks so big weeks don't
-  materialize in memory.
-- `spaces_sync.py` — boto3 against the DO endpoint (Spaces is S3-compatible).
-  Credentials from env or gitignored `.env`, never logged. Skips objects
-  whose size already matches. `--check`, `--dry-run`, `--prefix`.
+- `spaces/spaces_export.py` — SQLite → Parquet in the bucket layout, into
+  `spaces/staging/`. Streams each week through a ParquetWriter in row-group
+  chunks so big weeks don't materialize in memory.
+- `spaces/spaces_sync.py` — boto3 against the DO endpoint (Spaces is
+  S3-compatible). Credentials from env or gitignored `.env` (checked at the
+  repo root, then next to the script), never logged. Skips objects whose
+  size already matches. `--check`, `--dry-run`, `--prefix`.
+- `daily_sync.py` — runs `bulk_pull.py` for one day (default: yesterday,
+  UTC) then chains into `spaces/spaces_export.py` and `spaces/spaces_sync.py`.
+  This is what the daily Routine below actually invokes.
 - `build_dataset.py`, `liquidity_filter.py` — the original SIU–Samford
   one-off scripts, superseded by the above but kept as the original analysis.
+  Unlike the rest, these use paths relative to the working directory, not
+  the script's own directory, so run them from `data/`.
+
+## Daily automation
+
+A Claude Code Routine (scheduled trigger) fires daily, spins up a fresh
+session in this environment, and runs `python3 data/daily_sync.py`. Because
+each firing gets a fresh, ephemeral container with no persisted `.env`,
+`SPACES_KEY` / `SPACES_SECRET` / `SPACES_REGION` / `SPACES_BUCKET` need to be
+available some other way for that session to actually upload anything —
+either as environment variables configured on this Claude Code environment
+itself, or the fired session needs to be told where to get them. Check with
+whoever owns this project whether that's set up before assuming the daily
+job is actually uploading data.
 
 ## Credentials & environment
 
-- `.env` (gitignored) holds `SPACES_KEY` / `SPACES_SECRET` /
-  `SPACES_REGION=nyc3` / `SPACES_BUCKET=degenerate-cafe`. **These keys were
-  shared through a chat transcript and should be rotated.**
+- `.env` (gitignored; repo root, or `data/spaces/`) holds `SPACES_KEY` /
+  `SPACES_SECRET` / `SPACES_REGION=nyc3` / `SPACES_BUCKET=degenerate-cafe`.
+  **These keys were shared through a chat transcript and should be
+  rotated.**
 - **Egress is allowlisted per environment.** `api.elections.kalshi.com` and
   `nyc3.digitaloceanspaces.com` are open. ESPN, TheOddsAPI, TheSportsDB,
   Sportradar and Kalshi's *docs* domains are blocked (403 from the proxy).

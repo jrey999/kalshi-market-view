@@ -31,8 +31,8 @@ Orderbook snapshots stay raw JSON in a single column -- they're cheap to
 keep as-is and can be flattened in the database when actually needed.
 
 Usage:
-  python3 spaces_export.py --db kalshi_historical.db
-  python3 spaces_export.py --db kalshi_market_data.db --out spaces
+  python3 spaces_export.py --db ../kalshi_historical.db
+  python3 spaces_export.py --db ../kalshi_market_data.db --out staging
 """
 import argparse
 import os
@@ -43,11 +43,13 @@ from datetime import date
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(SCRIPT_DIR))  # data/, for sibling kalshi_db
 import kalshi_db
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_OUT = os.path.join(SCRIPT_DIR, "spaces")
+# Local staging tree that mirrors the bucket layout before spaces_sync.py
+# uploads it -- named to avoid colliding with this data/spaces/ code dir.
+DEFAULT_OUT = os.path.join(SCRIPT_DIR, "staging")
 CHUNK = 200_000  # rows per row-group, keeps peak memory flat on big weeks
 
 MONTHS = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,

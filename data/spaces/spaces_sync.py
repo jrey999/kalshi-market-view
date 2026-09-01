@@ -27,7 +27,8 @@ import os
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_LOCAL_ROOT = os.path.join(SCRIPT_DIR, "spaces")
+# Matches spaces_export.py's DEFAULT_OUT -- the local tree it stages before upload.
+DEFAULT_LOCAL_ROOT = os.path.join(SCRIPT_DIR, "staging")
 
 
 def _parse_env_file(path):
@@ -49,12 +50,31 @@ def _parse_env_file(path):
     return values
 
 
+def _find_repo_root(start):
+    """Walk up from `start` looking for a .git directory. Bounded so a script
+    run from somewhere unexpected can't wander off and read an unrelated .env."""
+    d = start
+    for _ in range(6):
+        if os.path.isdir(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+    return None
+
+
 def load_env():
-    """Read .env (repo root, alongside this script) without overriding real env vars."""
+    """Read .env (repo root, or alongside this script) without overriding real
+    env vars. Checked by repo root first, script dir second, so a script-local
+    .env can override one at the root if both happen to exist."""
     values = {}
-    candidate = os.path.join(SCRIPT_DIR, ".env")
-    if os.path.exists(candidate):
-        values.update(_parse_env_file(candidate))
+    repo_root = _find_repo_root(SCRIPT_DIR)
+    candidates = ([os.path.join(repo_root, ".env")] if repo_root else []) + \
+                 [os.path.join(SCRIPT_DIR, ".env")]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            values.update(_parse_env_file(candidate))
     cfg = {}
     for key in ("SPACES_KEY", "SPACES_SECRET", "SPACES_REGION", "SPACES_BUCKET"):
         cfg[key] = os.environ.get(key) or values.get(key)

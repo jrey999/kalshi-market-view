@@ -7,6 +7,10 @@
 *.db-wal
 *.db-shm
 
-# Local export tree and per-game report output (regenerable)
-spaces/
-reports/
+# Local Parquet staging tree spaces_export.py writes and spaces_sync.py
+# uploads from -- anchored so this doesn't also match data/spaces/, the code
+# directory (regenerable)
+/data/spaces/staging/
+
+# Per-game report output from kalshi_game_report.py (regenerable)
+/data/reports/
