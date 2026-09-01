@@ -1,0 +1,12 @@
+# Credentials
+.env
+
+# SQLite working cache and sidecars (data lives in the Spaces bucket, not git)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local export tree and per-game report output (regenerable)
+spaces/
+reports/
