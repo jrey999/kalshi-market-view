@@ -18,3 +18,6 @@ __pycache__/
 
 # Per-game report output from kalshi_game_report.py (regenerable)
 /data/reports/
+
+# Local Parquet cache analysis/db.py syncs down from Spaces for querying
+/analysis/cache/
