@@ -26,16 +26,14 @@ Usage:
 import argparse
 import os
 import sys
-from collections import defaultdict
-from datetime import datetime, timedelta
 
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from db import connect
 from filters import filtered_price_at
+from kickoff import load_favorites
 
-GAME_DURATION_HOURS = 3.5
 EPS = 1e-4  # keep logit() finite at the 0/100 boundary
 
 
@@ -111,57 +109,21 @@ def main():
     window_hours = args.window_hours
 
     con, root = connect()
-
-    markets = con.sql(f"""
-        SELECT market_ticker, event_ticker, result, expected_expiration_time
-        FROM read_parquet('{root}/season=2025/markets.parquet')
-        WHERE status = 'finalized' AND result IN ('yes', 'no')
-              AND expected_expiration_time IS NOT NULL
-    """).fetchall()
-
-    candle_rows = con.sql(f"""
-        SELECT market_ticker, end_period_ts, close_cents, volume,
-               yes_bid_close_cents, yes_ask_close_cents
-        FROM read_parquet('{root}/season=2025/candlesticks/week=*/candles.parquet', hive_partitioning=true)
-        ORDER BY market_ticker, end_period_ts
-    """).fetchall()
-
-    candles_by_market = defaultdict(list)
-    for mt, ts, close_c, vol, bid_c, ask_c in candle_rows:
-        candles_by_market[mt].append((ts, close_c, vol, bid_c, ask_c))
-
-    events = defaultdict(dict)
-    for market_ticker, event_ticker, result, exp_exp_iso in markets:
-        exp_exp = datetime.fromisoformat(exp_exp_iso.replace("Z", "+00:00"))
-        kickoff_ts = int((exp_exp - timedelta(hours=GAME_DURATION_HOURS)).timestamp())
-        candles = candles_by_market.get(market_ticker, [])
-        price_kick, _ = filtered_price_at(candles, kickoff_ts)
-        if price_kick is None:
-            continue
-        price_prior, _ = filtered_price_at(candles, kickoff_ts - window_hours * 3600)
-        events[event_ticker][market_ticker] = {
-            "result": result, "price_kick": price_kick, "price_prior": price_prior,
-        }
+    favorites, candles_by_market, stats = load_favorites(con, root)
 
     rows = []  # (favorite_price_kick, drift_cents, won)
-    skipped_incomplete = skipped_tie = skipped_no_prior = 0
-    for event_ticker, mkts in events.items():
-        if len(mkts) != 2:
-            skipped_incomplete += 1
-            continue
-        (mt_a, a), (mt_b, b) = mkts.items()
-        if a["price_kick"] == b["price_kick"]:
-            skipped_tie += 1
-            continue
-        favorite = a if a["price_kick"] > b["price_kick"] else b
-        if favorite["price_prior"] is None:
+    skipped_no_prior = 0
+    for fav in favorites:
+        candles = candles_by_market.get(fav["favorite_ticker"], [])
+        price_prior, _ = filtered_price_at(candles, fav["kickoff_ts"] - window_hours * 3600)
+        if price_prior is None:
             skipped_no_prior += 1
             continue
-        drift = favorite["price_kick"] - favorite["price_prior"]
-        won = 1.0 if favorite["result"] == "yes" else 0.0
-        rows.append((favorite["price_kick"], drift, won))
+        drift = fav["favorite_price"] - price_prior
+        won = 1.0 if fav["favorite_result"] == "yes" else 0.0
+        rows.append((fav["favorite_price"], drift, won))
 
-    print(f"{len(rows)} games usable ({skipped_incomplete} missing a side, {skipped_tie} exact ties, "
+    print(f"{len(rows)} games usable ({stats['incomplete']} missing a side, {stats['tie']} exact ties, "
           f"{skipped_no_prior} with no price {window_hours}h before kickoff).\n")
 
     price_kick = np.array([r[0] for r in rows])

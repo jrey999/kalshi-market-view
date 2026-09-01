@@ -20,71 +20,33 @@ Usage:
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from db import connect
-from filters import filtered_price_at, wilson_interval
+from filters import wilson_interval
+from kickoff import load_favorites
 
-GAME_DURATION_HOURS = 3.5
 BUCKET_WIDTH = 10  # cents
 
 
 def main():
     con, root = connect()
-
-    markets = con.sql(f"""
-        SELECT market_ticker, event_ticker, result, expected_expiration_time
-        FROM read_parquet('{root}/season=2025/markets.parquet')
-        WHERE status = 'finalized' AND result IN ('yes', 'no')
-              AND expected_expiration_time IS NOT NULL
-    """).fetchall()
-
-    candle_rows = con.sql(f"""
-        SELECT market_ticker, end_period_ts, close_cents, volume,
-               yes_bid_close_cents, yes_ask_close_cents
-        FROM read_parquet('{root}/season=2025/candlesticks/week=*/candles.parquet', hive_partitioning=true)
-        ORDER BY market_ticker, end_period_ts
-    """).fetchall()
-
-    candles_by_market = defaultdict(list)
-    for mt, ts, close_c, vol, bid_c, ask_c in candle_rows:
-        candles_by_market[mt].append((ts, close_c, vol, bid_c, ask_c))
-
-    events = defaultdict(dict)  # event_ticker -> market_ticker -> {result, price, source}
-    skipped_no_candles = 0
-    for market_ticker, event_ticker, result, exp_exp_iso in markets:
-        exp_exp = datetime.fromisoformat(exp_exp_iso.replace("Z", "+00:00"))
-        kickoff_ts = int((exp_exp - timedelta(hours=GAME_DURATION_HOURS)).timestamp())
-        price, source = filtered_price_at(candles_by_market.get(market_ticker, []), kickoff_ts)
-        if price is None:
-            skipped_no_candles += 1
-            continue
-        events[event_ticker][market_ticker] = {"result": result, "price": price, "source": source}
+    favorites, _, stats = load_favorites(con, root)
 
     buckets = defaultdict(lambda: {"n": 0, "wins": 0})
     by_source = defaultdict(lambda: {"n": 0, "wins": 0, "price_sum": 0.0})
-    skipped_incomplete = skipped_tie = 0
-    for event_ticker, mkts in events.items():
-        if len(mkts) != 2:
-            skipped_incomplete += 1
-            continue
-        (mt_a, a), (mt_b, b) = mkts.items()
-        if a["price"] == b["price"]:
-            skipped_tie += 1
-            continue
-        favorite = a if a["price"] > b["price"] else b
-        bucket = min(int(favorite["price"] // BUCKET_WIDTH) * BUCKET_WIDTH, 100 - BUCKET_WIDTH)
+    for fav in favorites:
+        price, source, result = fav["favorite_price"], fav["favorite_source"], fav["favorite_result"]
+        bucket = min(int(price // BUCKET_WIDTH) * BUCKET_WIDTH, 100 - BUCKET_WIDTH)
         buckets[bucket]["n"] += 1
-        by_source[favorite["source"]]["n"] += 1
-        by_source[favorite["source"]]["price_sum"] += favorite["price"]
-        if favorite["result"] == "yes":
+        by_source[source]["n"] += 1
+        by_source[source]["price_sum"] += price
+        if result == "yes":
             buckets[bucket]["wins"] += 1
-            by_source[favorite["source"]]["wins"] += 1
+            by_source[source]["wins"] += 1
 
-    print(f"Games: {len(events)} events with a kickoff-cut price on at least one side; "
-          f"{skipped_incomplete} missing a side, {skipped_tie} exact ties, "
-          f"{skipped_no_candles} markets with no data before kickoff cut.\n")
+    print(f"Games: {len(favorites)} usable; {stats['incomplete']} missing a side, "
+          f"{stats['tie']} exact ties, {stats['no_price']} markets with no data before kickoff cut.\n")
 
     print(f"{'bucket':>12} {'n':>5} {'win rate':>10} {'95% CI':>18}")
     total_n = 0
