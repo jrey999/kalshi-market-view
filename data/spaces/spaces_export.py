@@ -148,11 +148,12 @@ def export(db_path, out_root):
         ph = ",".join("?" * len(tickers))
         markets = conn.execute(
             f"""SELECT market_ticker, event_ticker, label, open_time, close_time,
-                       status, result, last_pulled_at
+                       status, result, expected_expiration_time, last_pulled_at
                 FROM markets WHERE event_ticker IN ({ph})""", tickers
         ).fetchall()
         n_rows += write_table(markets, ["market_ticker", "event_ticker", "label", "open_time",
-                                        "close_time", "status", "result", "last_pulled_at"],
+                                        "close_time", "status", "result", "expected_expiration_time",
+                                        "last_pulled_at"],
                               f"{base}/markets.parquet")
         n_files += 1
 

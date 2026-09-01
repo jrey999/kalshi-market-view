@@ -227,6 +227,7 @@ def pull_event(event_ticker, series_ticker):
             "result": mm.get("result"),
             "open_time": mm.get("open_time", ""),
             "close_time": mm.get("close_time", ""),
+            "expected_expiration_time": mm.get("expected_expiration_time"),
             "trades": {"trades": trades},
             "candlesticks": candles,
             "orderbook_snapshot": orderbook,

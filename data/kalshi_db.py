@@ -37,14 +37,15 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE TABLE IF NOT EXISTS markets (
-    market_ticker     TEXT PRIMARY KEY,
-    event_ticker      TEXT NOT NULL REFERENCES events(event_ticker),
-    label             TEXT,
-    open_time         TEXT,
-    close_time        TEXT,
-    status            TEXT,
-    result            TEXT,
-    last_pulled_at    TEXT
+    market_ticker            TEXT PRIMARY KEY,
+    event_ticker             TEXT NOT NULL REFERENCES events(event_ticker),
+    label                    TEXT,
+    open_time                TEXT,
+    close_time               TEXT,
+    status                   TEXT,
+    result                   TEXT,
+    expected_expiration_time TEXT,
+    last_pulled_at           TEXT
 );
 
 CREATE TABLE IF NOT EXISTS trades (
@@ -86,7 +87,7 @@ def _migrate(conn):
     """Add columns introduced after the table already existed on disk --
     SQLite's CREATE TABLE IF NOT EXISTS won't add them to an existing table."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(markets)")}
-    for col in ("status", "result"):
+    for col in ("status", "result", "expected_expiration_time"):
         if col not in existing:
             conn.execute(f"ALTER TABLE markets ADD COLUMN {col} TEXT")
 
@@ -124,13 +125,14 @@ def store_raw(raw, db_path=DEFAULT_DB_PATH):
         n_trades = n_candles = n_books = 0
         for ticker, m in raw["markets"].items():
             conn.execute("""
-                INSERT INTO markets (market_ticker, event_ticker, label, open_time, close_time, status, result, last_pulled_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO markets (market_ticker, event_ticker, label, open_time, close_time, status, result, expected_expiration_time, last_pulled_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(market_ticker) DO UPDATE SET
                     label=excluded.label, status=excluded.status, result=excluded.result,
+                    expected_expiration_time=excluded.expected_expiration_time,
                     last_pulled_at=excluded.last_pulled_at
             """, (ticker, event_ticker, m["label"], m.get("open_time", ""), m.get("close_time", ""),
-                  m.get("status"), m.get("result"), now))
+                  m.get("status"), m.get("result"), m.get("expected_expiration_time"), now))
 
             for t in m["trades"]["trades"]:
                 conn.execute("""
