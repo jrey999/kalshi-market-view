@@ -1,5 +1,12 @@
 # Kalshi CFB market research — project context
 
+**⚠ This repo is dormant.** Kalshi collection and analysis moved to
+`jrey999/degenerate-cafe-data`, under `data/kalshi/` and `analysis/` there —
+part of a multi-source monorepo (Pinnacle, an NBA API, etc. to follow).
+This repo's daily Routine has been deleted; nothing here runs on a
+schedule anymore. Kept around for history, not actively developed. See
+`data/kalshi/CONTEXT.md` in the new repo for the current state.
+
 Pulling and analyzing Kalshi prediction-market data for college football,
 building toward modeling signals from order flow. Started as research into
 one game (Southern Illinois @ Samford, Sept 3 2026), generalized into a
@@ -153,15 +160,12 @@ dataset.
 
 ## Daily automation
 
-A Claude Code Routine (scheduled trigger) fires daily, spins up a fresh
-session in this environment, and runs `python3 data/daily_sync.py`. Because
-each firing gets a fresh, ephemeral container with no persisted `.env`,
-`SPACES_KEY` / `SPACES_SECRET` / `SPACES_REGION` / `SPACES_BUCKET` need to be
-available some other way for that session to actually upload anything —
-either as environment variables configured on this Claude Code environment
-itself, or the fired session needs to be told where to get them. Check with
-whoever owns this project whether that's set up before assuming the daily
-job is actually uploading data.
+None here anymore. This repo briefly had a Claude Code Routine that fired
+daily and ran `python3 data/daily_sync.py`; it's been deleted now that
+Kalshi collection runs from `jrey999/degenerate-cafe-data` instead, via a
+GitHub Actions workflow (matching the pattern already used by
+nba/mlb/nfl-game-data-spaces and odds-data-spaces) — see that repo's
+`data/kalshi/CONTEXT.md`.
 
 ## Credentials & environment
 
